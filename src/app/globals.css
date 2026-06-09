@@ -346,10 +346,32 @@ p {
 
 .import-actions {
   grid-column: 1 / -1;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
   align-items: center;
   border-top: 3px solid var(--border);
   padding-top: 18px;
+}
+
+.import-palette-control {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.import-palette-control button {
+  border: 3px solid var(--border);
+  background: #f9fafb;
+  color: var(--text);
+  padding: 10px 12px;
+  box-shadow: 4px 4px 0 var(--shadow);
+  font-weight: 700;
+}
+
+.import-palette-control button.active {
+  border-color: var(--accent-2);
+  background: #111827;
+  color: #ffffff;
 }
 
 .pixel-file-button {

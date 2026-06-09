@@ -38,3 +38,23 @@
 
 - 尚未做移动端真实截图验收。
 - 尚未验证 Safari / Chrome 之外的下载行为。
+
+## 2026-06-10：PNG 导入调色板归并
+
+### 已通过
+
+- `npm run build` 通过。
+- Playwright 打开 `http://localhost:3000/projects` 成功。
+- 项目页 PNG 导入区域显示 8 / 16 / 32 / 64 色调色板按钮。
+- 点击 8 色、16 色后，选中态能正确切换。
+- 使用临时测试 PNG `/tmp/pixel-import-palette-test.png` 走真实页面上传流程成功。
+- 选择 16 色导入后，编辑器来源显示 `PNG 导入：pixel-import-palette-test.png，16 色`。
+- 导出 JSON 后检查 `SpriteDocument`：
+  - `palette.length` 为 16。
+  - 当前帧实际像素颜色数为 16。
+  - 来源记录为 `PNG 导入：pixel-import-palette-test.png，16 色`。
+
+### 已知限制
+
+- 文件上传验证使用 Playwright 和临时 PNG，尚未做人工视觉对比。
+- 调色板归并使用最近色匹配，尚未加入专业像素画的抖动、边缘增强和手动调色板编辑。

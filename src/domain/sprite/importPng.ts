@@ -13,6 +13,11 @@ import type {
 } from "./types";
 
 type DecodedImage = HTMLImageElement | ImageBitmap;
+export type ImportPaletteSize = 8 | 16 | 32 | 64;
+
+export interface PngImportOptions {
+  paletteSize?: ImportPaletteSize;
+}
 
 const fallbackPalette = [
   "#000000",
@@ -27,6 +32,7 @@ const fallbackPalette = [
 
 const alphaCutoff = 32;
 const maxPaletteColors = 64;
+const defaultPaletteSize: ImportPaletteSize = 32;
 
 function isPngFile(file: File) {
   return file.type === "image/png" || file.name.toLowerCase().endsWith(".png");
@@ -42,6 +48,14 @@ function toHex(value: number) {
 
 function toColor(r: number, g: number, b: number) {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function parseColor(color: string) {
+  return {
+    r: parseInt(color.slice(1, 3), 16),
+    g: parseInt(color.slice(3, 5), 16),
+    b: parseInt(color.slice(5, 7), 16)
+  };
 }
 
 function getImageSize(image: DecodedImage) {
@@ -202,9 +216,36 @@ function sampleAverageColor(
   };
 }
 
-function pixelsFromImageData(imageData: ImageData, size: SpriteSize) {
-  const pixels: PixelMap = {};
+function colorDistance(color: string, target: string) {
+  const a = parseColor(color);
+  const b = parseColor(target);
+  const r = a.r - b.r;
+  const g = a.g - b.g;
+  const blue = a.b - b.b;
+  return r * r + g * g + blue * blue;
+}
+
+function findNearestColor(color: string, palette: string[]) {
+  return palette.reduce(
+    (nearest, candidate) => {
+      const distance = colorDistance(color, candidate);
+      return distance < nearest.distance ? { color: candidate, distance } : nearest;
+    },
+    { color: palette[0] ?? color, distance: Number.POSITIVE_INFINITY }
+  ).color;
+}
+
+function pixelsFromImageData(
+  imageData: ImageData,
+  size: SpriteSize,
+  options?: PngImportOptions
+) {
+  const rawPixels: PixelMap = {};
   const colorCounts = new Map<string, number>();
+  const paletteSize = Math.min(
+    maxPaletteColors,
+    options?.paletteSize ?? defaultPaletteSize
+  );
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
@@ -217,7 +258,7 @@ function pixelsFromImageData(imageData: ImageData, size: SpriteSize) {
         imageData.data[index + 1],
         imageData.data[index + 2]
       );
-      pixels[pixelKey(x, y)] = color;
+      rawPixels[pixelKey(x, y)] = color;
       colorCounts.set(color, (colorCounts.get(color) ?? 0) + 1);
     }
   }
@@ -225,17 +266,25 @@ function pixelsFromImageData(imageData: ImageData, size: SpriteSize) {
   const palette = Array.from(colorCounts.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([color]) => color)
-    .slice(0, maxPaletteColors);
+    .slice(0, paletteSize);
+  const activePalette = palette.length ? palette : fallbackPalette;
+  const pixels = Object.fromEntries(
+    Object.entries(rawPixels).map(([key, color]) => [
+      key,
+      findNearestColor(color, activePalette)
+    ])
+  );
 
   return {
     pixels,
-    palette: palette.length ? palette : fallbackPalette
+    palette: activePalette
   };
 }
 
 export async function createSpriteDocumentFromPng(
   file: File,
-  size: SpriteSize
+  size: SpriteSize,
+  options?: PngImportOptions
 ): Promise<SpriteDocument> {
   if (!isPngFile(file)) {
     throw new Error("目前只支持导入 PNG 图片");
@@ -252,7 +301,11 @@ export async function createSpriteDocumentFromPng(
       locked: false,
       opacity: 1
     };
-    const { pixels, palette } = pixelsFromImageData(drawImageIntoGrid(image, size), size);
+    const { pixels, palette } = pixelsFromImageData(
+      drawImageIntoGrid(image, size),
+      size,
+      options
+    );
     const frame: SpriteFrame = {
       id: createId("frame"),
       name: "第 1 帧",
@@ -291,7 +344,7 @@ export async function createSpriteDocumentFromPng(
         {
           id: createId("source"),
           type: "pixel-import",
-          label: `PNG 导入：${file.name}`,
+          label: `PNG 导入：${file.name}，${palette.length} 色`,
           createdAt: now
         }
       ]

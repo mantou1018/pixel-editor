@@ -11,7 +11,10 @@ import {
   type PixelGenerationCandidate,
   type PixelGenerationStyle
 } from "@/domain/sprite/generate";
-import { createSpriteDocumentFromPng } from "@/domain/sprite/importPng";
+import {
+  createSpriteDocumentFromPng,
+  type ImportPaletteSize
+} from "@/domain/sprite/importPng";
 import { renderDocumentThumbnail } from "@/domain/sprite/render";
 import type { ProjectSummary, SpriteSize } from "@/domain/sprite/types";
 import {
@@ -22,6 +25,7 @@ import {
 } from "@/lib/storage/projects";
 
 const sizes: SpriteSize[] = [16, 32, 64];
+const importPaletteSizes: ImportPaletteSize[] = [8, 16, 32, 64];
 const generationStyles: Array<{ id: PixelGenerationStyle; label: string; hint: string }> = [
   { id: "rpg-character", label: "RPG 角色", hint: "适合人物、职业、站立精灵" },
   { id: "cute-pet", label: "可爱宠物", hint: "适合小狗、小猫、伙伴动物" },
@@ -33,6 +37,8 @@ export default function ProjectsPage() {
   const router = useRouter();
   const [summaries, setSummaries] = useState<ProjectSummary[]>([]);
   const [selectedSize, setSelectedSize] = useState<SpriteSize>(64);
+  const [importPaletteSize, setImportPaletteSize] =
+    useState<ImportPaletteSize>(32);
   const [projectName, setProjectName] = useState("新的精灵图");
   const [prompt, setPrompt] = useState("一只黄色小狗，正面，像素风");
   const [generationStyle, setGenerationStyle] =
@@ -71,10 +77,14 @@ export default function ProjectsPage() {
     if (!file) return;
 
     setIsImporting(true);
-    setStatus(`正在把「${file.name}」转为 ${selectedSize}x${selectedSize} 可编辑网格...`);
+    setStatus(
+      `正在把「${file.name}」转为 ${selectedSize}x${selectedSize} 可编辑网格，并归并为 ${importPaletteSize} 色...`
+    );
 
     try {
-      const document = await createSpriteDocumentFromPng(file, selectedSize);
+      const document = await createSpriteDocumentFromPng(file, selectedSize, {
+        paletteSize: importPaletteSize
+      });
       await createProject(document);
       router.push(`/editor/${document.id}`);
     } catch (error) {
@@ -171,7 +181,19 @@ export default function ProjectsPage() {
         <div className="import-actions">
           <div>
             <strong>PNG 导入</strong>
-            <p>透明像素会保留为空格子，导入后可继续用画笔和橡皮逐格编辑。</p>
+            <p>透明像素会保留为空格子，导入时会按调色板数量减少碎色。</p>
+          </div>
+          <div className="import-palette-control" aria-label="选择导入调色板数量">
+            {importPaletteSizes.map((size) => (
+              <button
+                key={size}
+                className={importPaletteSize === size ? "active" : ""}
+                onClick={() => setImportPaletteSize(size)}
+                type="button"
+              >
+                {size} 色
+              </button>
+            ))}
           </div>
           <label className={`pixel-file-button ${isImporting ? "disabled" : ""}`}>
             {isImporting ? "导入中..." : "选择 PNG 并转为网格"}
