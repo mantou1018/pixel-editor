@@ -21,6 +21,8 @@ import { loadProject, saveProject } from "@/lib/storage/projects";
 const maxUndoSteps = 50;
 type StrokeChange = { x: number; y: number; color: string | null };
 type BrushPopoverTool = "brush" | "eraser" | null;
+type ExportScaleMode = "original" | "preview";
+type ExportBackgroundMode = "transparent" | "selected";
 const minBrushSize = 1;
 const maxBrushSize = 8;
 
@@ -33,6 +35,10 @@ export default function EditorPage() {
   const [selectedColor, setSelectedColor] = useState("#374151");
   const [eraseMode, setEraseMode] = useState(false);
   const [brushSize, setBrushSize] = useState(minBrushSize);
+  const [exportScaleMode, setExportScaleMode] =
+    useState<ExportScaleMode>("original");
+  const [exportBackgroundMode, setExportBackgroundMode] =
+    useState<ExportBackgroundMode>("transparent");
   const [brushPopoverTool, setBrushPopoverTool] = useState<BrushPopoverTool>(null);
   const [editingBackgroundColor, setEditingBackgroundColor] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<SpriteDocument[]>([]);
@@ -204,7 +210,29 @@ export default function EditorPage() {
 
   function handleExportPng() {
     if (!document) return;
-    downloadDataUrl(`${document.name}.png`, exportDocumentPng(document));
+    const scale =
+      exportScaleMode === "preview"
+        ? Math.max(4, Math.floor(512 / document.canvas.width))
+        : 1;
+    const suffix =
+      exportScaleMode === "preview"
+        ? `${document.canvas.width * scale}px-preview`
+        : `${document.canvas.width}x${document.canvas.height}`;
+    const backgroundColor =
+      exportBackgroundMode === "selected" ? selectedColor : null;
+
+    downloadDataUrl(
+      `${document.name}-${suffix}.png`,
+      exportDocumentPng(document, {
+        backgroundColor,
+        scale
+      })
+    );
+    setStatus(
+      exportBackgroundMode === "selected"
+        ? `已导出 PNG：${suffix}，背景 ${selectedColor}`
+        : `已导出 PNG：${suffix}，透明背景`
+    );
   }
 
   function handleRemoveBackground() {
@@ -412,6 +440,41 @@ export default function EditorPage() {
             <p>图层：{activeLayer?.name ?? "默认图层"}</p>
             <p>动作数：{document.animations.length}</p>
             <p>帧数：{document.frames.length} / 12</p>
+          </section>
+          <section>
+            <h2>导出设置</h2>
+            <div className="export-options" role="group" aria-label="导出尺寸">
+              <button
+                className={exportScaleMode === "original" ? "active" : ""}
+                onClick={() => setExportScaleMode("original")}
+              >
+                原始尺寸
+                <span>{document.canvas.width}x{document.canvas.height}</span>
+              </button>
+              <button
+                className={exportScaleMode === "preview" ? "active" : ""}
+                onClick={() => setExportScaleMode("preview")}
+              >
+                预览大图
+                <span>最长边约 512px</span>
+              </button>
+            </div>
+            <div className="export-options" role="group" aria-label="导出背景">
+              <button
+                className={exportBackgroundMode === "transparent" ? "active" : ""}
+                onClick={() => setExportBackgroundMode("transparent")}
+              >
+                透明背景
+                <span>适合游戏素材</span>
+              </button>
+              <button
+                className={exportBackgroundMode === "selected" ? "active" : ""}
+                onClick={() => setExportBackgroundMode("selected")}
+              >
+                当前颜色背景
+                <span>{selectedColor}</span>
+              </button>
+            </div>
           </section>
           <section>
             <h2>图层</h2>

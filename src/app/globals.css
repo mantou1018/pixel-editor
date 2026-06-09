@@ -695,6 +695,37 @@ p {
   margin-bottom: 12px;
 }
 
+.export-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.export-options:last-child {
+  margin-bottom: 0;
+}
+
+.export-options button {
+  display: grid;
+  gap: 6px;
+  min-height: 70px;
+  margin-bottom: 0;
+  padding: 10px;
+  text-align: left;
+}
+
+.export-options button.active {
+  border-color: var(--accent-2);
+  background: #e5e7eb;
+}
+
+.export-options span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .layer-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

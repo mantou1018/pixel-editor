@@ -34,6 +34,7 @@ export function renderDocumentToCanvas(
   canvas: HTMLCanvasElement,
   document: SpriteDocument,
   options?: {
+    backgroundColor?: string | null;
     showCheckerboard?: boolean;
     showGrid?: boolean;
     selected?: { x: number; y: number } | null;
@@ -52,6 +53,10 @@ export function renderDocumentToCanvas(
 
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, width, height);
+  if (options?.backgroundColor) {
+    ctx.fillStyle = options.backgroundColor;
+    ctx.fillRect(0, 0, width, height);
+  }
   if (options?.showCheckerboard ?? true) {
     drawCheckerboard(ctx, width, height, scale);
   }
@@ -122,10 +127,17 @@ export function renderDocumentThumbnail(
   return canvas.toDataURL("image/png");
 }
 
-export function exportDocumentPng(document: SpriteDocument): string {
+export function exportDocumentPng(
+  document: SpriteDocument,
+  options?: {
+    backgroundColor?: string | null;
+    scale?: number;
+  }
+): string {
   const canvas = window.document.createElement("canvas");
-  const scale = Math.max(4, Math.floor(512 / document.canvas.width));
+  const scale = options?.scale ?? Math.max(4, Math.floor(512 / document.canvas.width));
   renderDocumentToCanvas(canvas, document, {
+    backgroundColor: options?.backgroundColor ?? null,
     showCheckerboard: false,
     showGrid: false,
     scale
