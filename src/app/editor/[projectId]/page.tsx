@@ -71,6 +71,11 @@ export default function EditorPage() {
     );
   }, [document]);
 
+  const sourceLabel = useMemo(() => {
+    if (!document) return "未知来源";
+    return document.sources[document.sources.length - 1]?.label ?? "未知来源";
+  }, [document]);
+
   async function handleSave() {
     if (!document) return;
     setStatus("保存中...");
@@ -396,9 +401,10 @@ export default function EditorPage() {
 
         <aside className="side-panel">
           <section>
-            <h2>智能行动</h2>
-            <button disabled>AI 生成占位</button>
-            <p>第一轮只保留入口，不接真实 AI。</p>
+            <h2>生成来源</h2>
+            <p>{sourceLabel}</p>
+            <button disabled>基于当前图再生成</button>
+            <p>下一轮接真实 AI 或局部重绘；当前结果已可编辑和导出。</p>
           </section>
           <section>
             <h2>控制</h2>

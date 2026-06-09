@@ -6,7 +6,13 @@ import { useRouter } from "next/navigation";
 import { PixelButton } from "@/components/PixelButton";
 import { ProjectCard } from "@/components/projects/ProjectCard";
 import { createSpriteDocument } from "@/domain/sprite/document";
+import {
+  generatePixelCandidates,
+  type PixelGenerationCandidate,
+  type PixelGenerationStyle
+} from "@/domain/sprite/generate";
 import { createSpriteDocumentFromPng } from "@/domain/sprite/importPng";
+import { renderDocumentThumbnail } from "@/domain/sprite/render";
 import type { ProjectSummary, SpriteSize } from "@/domain/sprite/types";
 import {
   createProject,
@@ -16,14 +22,26 @@ import {
 } from "@/lib/storage/projects";
 
 const sizes: SpriteSize[] = [16, 32, 64];
+const generationStyles: Array<{ id: PixelGenerationStyle; label: string; hint: string }> = [
+  { id: "rpg-character", label: "RPG 角色", hint: "适合人物、职业、站立精灵" },
+  { id: "cute-pet", label: "可爱宠物", hint: "适合小狗、小猫、伙伴动物" },
+  { id: "item-icon", label: "道具图标", hint: "适合物品、徽章、技能图标" },
+  { id: "avatar", label: "头像", hint: "适合社交头像、表情、NPC 头部" }
+];
 
 export default function ProjectsPage() {
   const router = useRouter();
   const [summaries, setSummaries] = useState<ProjectSummary[]>([]);
   const [selectedSize, setSelectedSize] = useState<SpriteSize>(64);
   const [projectName, setProjectName] = useState("新的精灵图");
+  const [prompt, setPrompt] = useState("一只黄色小狗，正面，像素风");
+  const [generationStyle, setGenerationStyle] =
+    useState<PixelGenerationStyle>("cute-pet");
+  const [candidates, setCandidates] = useState<PixelGenerationCandidate[]>([]);
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [status, setStatus] = useState("读取本地项目库...");
   const [isImporting, setIsImporting] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   async function refresh() {
     try {
@@ -65,6 +83,28 @@ export default function ProjectsPage() {
       setIsImporting(false);
       event.target.value = "";
     }
+  }
+
+  function handleGenerate() {
+    setIsGenerating(true);
+    setStatus("正在生成 4 个可编辑像素候选...");
+
+    window.setTimeout(() => {
+      const nextCandidates = generatePixelCandidates({
+        prompt,
+        size: selectedSize,
+        style: generationStyle
+      });
+      setCandidates(nextCandidates);
+      setSelectedCandidateId(nextCandidates[0]?.id ?? null);
+      setIsGenerating(false);
+      setStatus("已生成候选，选择一个进入编辑器继续修色。");
+    }, 260);
+  }
+
+  async function handleUseCandidate(candidate: PixelGenerationCandidate) {
+    await createProject(candidate.document);
+    router.push(`/editor/${candidate.document.id}`);
   }
 
   async function handleRename(id: string) {
@@ -143,6 +183,74 @@ export default function ProjectsPage() {
             />
           </label>
         </div>
+      </section>
+
+      <section className="generation-panel">
+        <div className="generation-copy">
+          <h2>文字生成像素图</h2>
+          <p>先用本地占位生成跑通工作流：输入描述，得到 4 个候选，选择后进入编辑器继续改色和导出。</p>
+        </div>
+
+        <label className="prompt-field">
+          提示词
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            rows={3}
+            placeholder="例如：一只黄色小狗，正面，透明背景，适合 64x64 精灵图"
+          />
+        </label>
+
+        <div className="generation-style-list" aria-label="选择生成风格">
+          {generationStyles.map((style) => (
+            <button
+              key={style.id}
+              className={generationStyle === style.id ? "active" : ""}
+              onClick={() => setGenerationStyle(style.id)}
+            >
+              <strong>{style.label}</strong>
+              <span>{style.hint}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="generation-actions">
+          <PixelButton onClick={handleGenerate} disabled={isGenerating}>
+            {isGenerating ? "生成中..." : "生成 4 个候选"}
+          </PixelButton>
+          <span>{selectedSize}x{selectedSize} · 透明背景 · 可编辑像素块</span>
+        </div>
+
+        {candidates.length ? (
+          <div className="candidate-grid" aria-label="生成候选">
+            {candidates.map((candidate) => (
+              <article
+                key={candidate.id}
+                className={`candidate-card ${
+                  selectedCandidateId === candidate.id ? "active" : ""
+                }`}
+              >
+                <button
+                  className="candidate-preview"
+                  onClick={() => setSelectedCandidateId(candidate.id)}
+                  aria-label={`选择${candidate.title}`}
+                >
+                  <img
+                    src={renderDocumentThumbnail(candidate.document, 180)}
+                    alt={candidate.title}
+                  />
+                </button>
+                <div>
+                  <h3>{candidate.title}</h3>
+                  <p>{candidate.description}</p>
+                </div>
+                <PixelButton onClick={() => handleUseCandidate(candidate)}>
+                  选中并编辑
+                </PixelButton>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <div className="archive-status">{status}</div>
