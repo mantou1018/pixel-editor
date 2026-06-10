@@ -2,9 +2,18 @@ import type { ProjectSummary, SpriteDocument } from "@/domain/sprite/types";
 import { createSummary, getNowIso, renameDocument } from "@/domain/sprite/document";
 
 const dbName = "sprite-tool-mvp";
-const dbVersion = 1;
+const dbVersion = 2;
 const summaryStore = "project_summaries";
 const documentStore = "project_documents";
+const generationWorkspaceStore = "generation_workspace";
+const generationWorkspaceKey = "default";
+
+export interface GenerationWorkspaceState {
+  id: typeof generationWorkspaceKey;
+  history: unknown[];
+  favoriteCandidateIds: string[];
+  updatedAt: string;
+}
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -17,6 +26,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(documentStore)) {
         db.createObjectStore(documentStore, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(generationWorkspaceStore)) {
+        db.createObjectStore(generationWorkspaceStore, { keyPath: "id" });
       }
     };
 
@@ -101,4 +113,37 @@ export async function deleteProject(id: string): Promise<void> {
   });
 
   db.close();
+}
+
+export async function loadGenerationWorkspace(): Promise<GenerationWorkspaceState | null> {
+  const db = await openDb();
+  const transaction = db.transaction(generationWorkspaceStore, "readonly");
+  const store = transaction.objectStore(generationWorkspaceStore);
+  const state = await requestToPromise<GenerationWorkspaceState | undefined>(
+    store.get(generationWorkspaceKey)
+  );
+  db.close();
+  return state ?? null;
+}
+
+export async function saveGenerationWorkspace(
+  state: Omit<GenerationWorkspaceState, "id" | "updatedAt">
+): Promise<GenerationWorkspaceState> {
+  const nextState: GenerationWorkspaceState = {
+    id: generationWorkspaceKey,
+    updatedAt: getNowIso(),
+    ...state
+  };
+  const db = await openDb();
+  const transaction = db.transaction(generationWorkspaceStore, "readwrite");
+  transaction.objectStore(generationWorkspaceStore).put(nextState);
+
+  await new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+
+  db.close();
+  return nextState;
 }

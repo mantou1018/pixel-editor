@@ -20,8 +20,10 @@ import type { ProjectSummary, SpriteSize } from "@/domain/sprite/types";
 import {
   createProject,
   deleteProject,
+  loadGenerationWorkspace,
   listProjectSummaries,
-  renameProject
+  renameProject,
+  saveGenerationWorkspace
 } from "@/lib/storage/projects";
 
 const sizes: SpriteSize[] = [16, 32, 64];
@@ -41,6 +43,19 @@ type GenerationHistoryItem = {
   candidates: PixelGenerationCandidate[];
 };
 
+function isGenerationHistoryItem(item: unknown): item is GenerationHistoryItem {
+  if (!item || typeof item !== "object") return false;
+  const value = item as Partial<GenerationHistoryItem>;
+  return (
+    typeof value.id === "string" &&
+    typeof value.prompt === "string" &&
+    typeof value.createdAt === "string" &&
+    (value.size === 16 || value.size === 32 || value.size === 64) &&
+    generationStyles.some((style) => style.id === value.style) &&
+    Array.isArray(value.candidates)
+  );
+}
+
 export default function ProjectsPage() {
   const router = useRouter();
   const [summaries, setSummaries] = useState<ProjectSummary[]>([]);
@@ -58,6 +73,7 @@ export default function ProjectsPage() {
   const [status, setStatus] = useState("读取本地项目库...");
   const [isImporting, setIsImporting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
 
   const favoriteCandidates = useMemo(() => {
     const allCandidates = generationHistory.flatMap((item) => item.candidates);
@@ -79,6 +95,43 @@ export default function ProjectsPage() {
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    async function loadWorkspace() {
+      try {
+        const state = await loadGenerationWorkspace();
+        if (state) {
+          const history = state.history.filter(isGenerationHistoryItem).slice(0, 6);
+          setGenerationHistory(history);
+          setFavoriteCandidateIds(state.favoriteCandidateIds);
+          if (history[0]) {
+            setPrompt(history[0].prompt);
+            setSelectedSize(history[0].size);
+            setGenerationStyle(history[0].style);
+            setCandidates(history[0].candidates);
+            setSelectedCandidateId(history[0].candidates[0]?.id ?? null);
+          }
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "生成工作台读取失败");
+      } finally {
+        setWorkspaceLoaded(true);
+      }
+    }
+
+    loadWorkspace();
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceLoaded) return;
+
+    saveGenerationWorkspace({
+      history: generationHistory,
+      favoriteCandidateIds
+    }).catch((error) => {
+      setStatus(error instanceof Error ? error.message : "生成工作台保存失败");
+    });
+  }, [favoriteCandidateIds, generationHistory, workspaceLoaded]);
 
   async function handleCreate() {
     const document = createSpriteDocument({
@@ -290,7 +343,9 @@ export default function ProjectsPage() {
           <PixelButton onClick={handleGenerate} disabled={isGenerating}>
             {isGenerating ? "生成中..." : "生成 4 个候选"}
           </PixelButton>
-          <span>{selectedSize}x{selectedSize} · 透明背景 · 可编辑像素块</span>
+          <span>
+            {selectedSize}x{selectedSize} · 透明背景 · 可编辑像素块 · 历史和收藏保存在本机浏览器
+          </span>
         </div>
 
         {candidates.length ? (
