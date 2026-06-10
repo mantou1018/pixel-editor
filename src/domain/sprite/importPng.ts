@@ -13,7 +13,7 @@ import type {
 } from "./types";
 
 type DecodedImage = HTMLImageElement | ImageBitmap;
-export type ImportPaletteSize = 8 | 16 | 32 | 64;
+export type ImportPaletteSize = 8 | 16 | 32 | 64 | 128 | 256 | 512;
 
 export interface PngImportOptions {
   paletteSize?: ImportPaletteSize;
@@ -31,7 +31,7 @@ const fallbackPalette = [
 ];
 
 const alphaCutoff = 32;
-const maxPaletteColors = 64;
+const maxPaletteColors = 512;
 const defaultPaletteSize: ImportPaletteSize = 32;
 
 function isPngFile(file: File) {

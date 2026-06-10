@@ -27,7 +27,7 @@ import {
 } from "@/lib/storage/projects";
 
 const sizes: SpriteSize[] = [16, 32, 64];
-const importPaletteSizes: ImportPaletteSize[] = [8, 16, 32, 64];
+const importPaletteSizes: ImportPaletteSize[] = [8, 16, 32, 64, 128, 256, 512];
 const generationStyles: Array<{ id: PixelGenerationStyle; label: string; hint: string }> = [
   { id: "rpg-character", label: "RPG 角色", hint: "适合人物、职业、站立精灵" },
   { id: "cute-pet", label: "可爱宠物", hint: "适合小狗、小猫、伙伴动物" },
