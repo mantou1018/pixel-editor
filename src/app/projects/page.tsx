@@ -42,6 +42,7 @@ type GenerationHistoryItem = {
   createdAt: string;
   candidates: PixelGenerationCandidate[];
 };
+type ExpandedOptionGroup = "size" | "palette" | "style" | null;
 
 function isGenerationHistoryItem(item: unknown): item is GenerationHistoryItem {
   if (!item || typeof item !== "object") return false;
@@ -74,6 +75,12 @@ export default function ProjectsPage() {
   const [isImporting, setIsImporting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const [expandedOptionGroup, setExpandedOptionGroup] =
+    useState<ExpandedOptionGroup>(null);
+
+  const selectedGenerationStyle =
+    generationStyles.find((style) => style.id === generationStyle) ??
+    generationStyles[0];
 
   const favoriteCandidates = useMemo(() => {
     const allCandidates = generationHistory.flatMap((item) => item.candidates);
@@ -220,6 +227,10 @@ export default function ProjectsPage() {
     router.push(`/editor/${candidate.document.id}`);
   }
 
+  function toggleOptionGroup(group: Exclude<ExpandedOptionGroup, null>) {
+    setExpandedOptionGroup((current) => (current === group ? null : group));
+  }
+
   async function handleRename(id: string) {
     const current = summaries.find((summary) => summary.id === id);
     const name = window.prompt("输入新的项目名", current?.name ?? "");
@@ -257,16 +268,39 @@ export default function ProjectsPage() {
           <p>选择尺寸后，可以从空白画布开始，也可以把 PNG 转成可编辑像素网格。</p>
         </div>
 
-        <div className="size-switcher" aria-label="选择尺寸">
-          {sizes.map((size) => (
-            <button
-              key={size}
-              className={selectedSize === size ? "active" : ""}
-              onClick={() => setSelectedSize(size)}
-            >
-              {size}x{size}
+        <div className="compact-option-group" aria-label="选择尺寸">
+          <div className="compact-option-current">
+            <button className="option-choice active" onClick={() => toggleOptionGroup("size")}>
+              {selectedSize}x{selectedSize}
             </button>
-          ))}
+            <button
+              className={`option-toggle ${expandedOptionGroup === "size" ? "active" : ""}`}
+              onClick={() => toggleOptionGroup("size")}
+              aria-label="展开尺寸选项"
+              aria-expanded={expandedOptionGroup === "size"}
+              type="button"
+            >
+              ⌄
+            </button>
+          </div>
+          {expandedOptionGroup === "size" ? (
+            <div className="option-list">
+              {sizes
+                .filter((size) => size !== selectedSize)
+                .map((size) => (
+                  <button
+                    key={size}
+                    onClick={() => {
+                      setSelectedSize(size);
+                      setExpandedOptionGroup(null);
+                    }}
+                    type="button"
+                  >
+                    {size}x{size}
+                  </button>
+                ))}
+            </div>
+          ) : null}
         </div>
 
         <div className="start-actions">
@@ -286,17 +320,39 @@ export default function ProjectsPage() {
             <strong>PNG 导入</strong>
             <p>透明像素会保留为空格子，导入时会按调色板数量减少碎色。</p>
           </div>
-          <div className="import-palette-control" aria-label="选择导入调色板数量">
-            {importPaletteSizes.map((size) => (
+          <div className="compact-option-group" aria-label="选择导入调色板数量">
+            <div className="compact-option-current">
+              <button className="option-choice active" onClick={() => toggleOptionGroup("palette")}>
+                {importPaletteSize} 色
+              </button>
               <button
-                key={size}
-                className={importPaletteSize === size ? "active" : ""}
-                onClick={() => setImportPaletteSize(size)}
+                className={`option-toggle ${expandedOptionGroup === "palette" ? "active" : ""}`}
+                onClick={() => toggleOptionGroup("palette")}
+                aria-label="展开调色板数量选项"
+                aria-expanded={expandedOptionGroup === "palette"}
                 type="button"
               >
-                {size} 色
+                ⌄
               </button>
-            ))}
+            </div>
+            {expandedOptionGroup === "palette" ? (
+              <div className="option-list align-end">
+                {importPaletteSizes
+                  .filter((size) => size !== importPaletteSize)
+                  .map((size) => (
+                    <button
+                      key={size}
+                      onClick={() => {
+                        setImportPaletteSize(size);
+                        setExpandedOptionGroup(null);
+                      }}
+                      type="button"
+                    >
+                      {size} 色
+                    </button>
+                  ))}
+              </div>
+            ) : null}
           </div>
           <label className={`pixel-file-button ${isImporting ? "disabled" : ""}`}>
             {isImporting ? "导入中..." : "选择 PNG 并转为网格"}
@@ -326,17 +382,42 @@ export default function ProjectsPage() {
           />
         </label>
 
-        <div className="generation-style-list" aria-label="选择生成风格">
-          {generationStyles.map((style) => (
-            <button
-              key={style.id}
-              className={generationStyle === style.id ? "active" : ""}
-              onClick={() => setGenerationStyle(style.id)}
-            >
-              <strong>{style.label}</strong>
-              <span>{style.hint}</span>
+        <div className="compact-option-group" aria-label="选择生成风格">
+          <div className="compact-option-current">
+            <button className="style-choice active" onClick={() => toggleOptionGroup("style")}>
+              <strong>{selectedGenerationStyle.label}</strong>
+              <span>{selectedGenerationStyle.hint}</span>
             </button>
-          ))}
+            <button
+              className={`option-toggle ${expandedOptionGroup === "style" ? "active" : ""}`}
+              onClick={() => toggleOptionGroup("style")}
+              aria-label="展开生成风格选项"
+              aria-expanded={expandedOptionGroup === "style"}
+              type="button"
+            >
+              ⌄
+            </button>
+          </div>
+          {expandedOptionGroup === "style" ? (
+            <div className="style-option-list">
+              {generationStyles
+                .filter((style) => style.id !== generationStyle)
+                .map((style) => (
+                  <button
+                    key={style.id}
+                    className="style-choice"
+                    onClick={() => {
+                      setGenerationStyle(style.id);
+                      setExpandedOptionGroup(null);
+                    }}
+                    type="button"
+                  >
+                    <strong>{style.label}</strong>
+                    <span>{style.hint}</span>
+                  </button>
+                ))}
+            </div>
+          ) : null}
         </div>
 
         <div className="generation-actions">
