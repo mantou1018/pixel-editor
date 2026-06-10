@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { PixelButton } from "@/components/PixelButton";
@@ -32,6 +32,14 @@ const generationStyles: Array<{ id: PixelGenerationStyle; label: string; hint: s
   { id: "item-icon", label: "道具图标", hint: "适合物品、徽章、技能图标" },
   { id: "avatar", label: "头像", hint: "适合社交头像、表情、NPC 头部" }
 ];
+type GenerationHistoryItem = {
+  id: string;
+  prompt: string;
+  size: SpriteSize;
+  style: PixelGenerationStyle;
+  createdAt: string;
+  candidates: PixelGenerationCandidate[];
+};
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -45,9 +53,18 @@ export default function ProjectsPage() {
     useState<PixelGenerationStyle>("cute-pet");
   const [candidates, setCandidates] = useState<PixelGenerationCandidate[]>([]);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [generationHistory, setGenerationHistory] = useState<GenerationHistoryItem[]>([]);
+  const [favoriteCandidateIds, setFavoriteCandidateIds] = useState<string[]>([]);
   const [status, setStatus] = useState("读取本地项目库...");
   const [isImporting, setIsImporting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const favoriteCandidates = useMemo(() => {
+    const allCandidates = generationHistory.flatMap((item) => item.candidates);
+    return favoriteCandidateIds
+      .map((id) => allCandidates.find((candidate) => candidate.id === id))
+      .filter((candidate): candidate is PixelGenerationCandidate => Boolean(candidate));
+  }, [favoriteCandidateIds, generationHistory]);
 
   async function refresh() {
     try {
@@ -105,11 +122,44 @@ export default function ProjectsPage() {
         size: selectedSize,
         style: generationStyle
       });
+      const historyItem: GenerationHistoryItem = {
+        id: `history_${Date.now().toString(36)}`,
+        prompt: prompt.trim() || "未命名像素图",
+        size: selectedSize,
+        style: generationStyle,
+        createdAt: new Date().toLocaleTimeString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit"
+        }),
+        candidates: nextCandidates
+      };
       setCandidates(nextCandidates);
+      setGenerationHistory((current) => [historyItem, ...current].slice(0, 6));
       setSelectedCandidateId(nextCandidates[0]?.id ?? null);
       setIsGenerating(false);
       setStatus("已生成候选，选择一个进入编辑器继续修色。");
     }, 260);
+  }
+
+  function handleReuseHistory(item: GenerationHistoryItem) {
+    setPrompt(item.prompt);
+    setSelectedSize(item.size);
+    setGenerationStyle(item.style);
+    setCandidates(item.candidates);
+    setSelectedCandidateId(item.candidates[0]?.id ?? null);
+    setStatus("已恢复历史候选，可继续选择或重新生成。");
+  }
+
+  function handleToggleFavorite(candidate: PixelGenerationCandidate) {
+    setFavoriteCandidateIds((current) => {
+      if (current.includes(candidate.id)) {
+        setStatus(`已取消收藏：${candidate.title}`);
+        return current.filter((id) => id !== candidate.id);
+      }
+
+      setStatus(`已收藏：${candidate.title}`);
+      return [candidate.id, ...current];
+    });
   }
 
   async function handleUseCandidate(candidate: PixelGenerationCandidate) {
@@ -266,12 +316,69 @@ export default function ProjectsPage() {
                   <h3>{candidate.title}</h3>
                   <p>{candidate.description}</p>
                 </div>
-                <PixelButton onClick={() => handleUseCandidate(candidate)}>
-                  选中并编辑
-                </PixelButton>
+                <div className="candidate-actions">
+                  <button
+                    className="candidate-favorite-button"
+                    onClick={() => handleToggleFavorite(candidate)}
+                    type="button"
+                  >
+                    {favoriteCandidateIds.includes(candidate.id) ? "已收藏" : "收藏"}
+                  </button>
+                  <PixelButton onClick={() => handleUseCandidate(candidate)}>
+                    选中并编辑
+                  </PixelButton>
+                </div>
               </article>
             ))}
           </div>
+        ) : null}
+
+        {favoriteCandidates.length ? (
+          <section className="favorite-candidates" aria-label="收藏候选">
+            <div className="generation-history-top">
+              <h3>收藏候选</h3>
+              <span>{favoriteCandidates.length} 个可编辑方案</span>
+            </div>
+            <div className="favorite-grid">
+              {favoriteCandidates.map((candidate) => (
+                <article key={candidate.id} className="favorite-card">
+                  <img
+                    src={renderDocumentThumbnail(candidate.document, 120)}
+                    alt={candidate.title}
+                  />
+                  <div>
+                    <strong>{candidate.title}</strong>
+                    <p>{candidate.description}</p>
+                  </div>
+                  <button onClick={() => handleUseCandidate(candidate)}>编辑此收藏</button>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {generationHistory.length ? (
+          <section className="generation-history" aria-label="生成历史">
+            <div className="generation-history-top">
+              <h3>生成历史</h3>
+              <span>保留最近 {generationHistory.length} 轮</span>
+            </div>
+            <div className="history-list">
+              {generationHistory.map((item) => (
+                <article key={item.id} className="history-row">
+                  <div>
+                    <strong>{item.prompt}</strong>
+                    <p>
+                      {item.size}x{item.size} ·{" "}
+                      {generationStyles.find((style) => style.id === item.style)?.label} ·{" "}
+                      {item.createdAt}
+                    </p>
+                  </div>
+                  <button onClick={() => handleReuseHistory(item)}>再次使用</button>
+                </article>
+              ))}
+            </div>
+          </section>
         ) : null}
       </section>
 
