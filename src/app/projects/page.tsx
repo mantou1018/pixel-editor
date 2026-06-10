@@ -241,7 +241,7 @@ export default function ProjectsPage() {
       <header className="archive-topbar">
         <div>
           <p className="eyebrow">Sprite Archive</p>
-          <h1>项目存档</h1>
+          <h1>像素图生成器</h1>
         </div>
         <div className="archive-controls">
           <span>第01/01页</span>
