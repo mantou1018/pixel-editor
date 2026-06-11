@@ -207,8 +207,9 @@ p {
 }
 
 .compact-option-group {
+  position: relative;
   display: grid;
-  gap: 10px;
+  min-width: 160px;
 }
 
 .compact-option-current {
@@ -246,20 +247,46 @@ p {
   line-height: 1;
 }
 
+.option-toggle.active {
+  transform: rotate(180deg);
+}
+
 .option-list {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 20;
   display: flex;
+  width: max-content;
+  min-width: 100%;
+  max-width: min(520px, 88vw);
   gap: 8px;
   flex-wrap: wrap;
+  border: 3px solid var(--border);
+  background: var(--panel);
+  padding: 10px;
+  box-shadow: 7px 7px 0 var(--shadow);
 }
 
 .option-list.align-end {
+  right: 0;
+  left: auto;
   justify-content: flex-end;
 }
 
 .style-option-list {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 20;
   display: grid;
+  width: min(760px, 88vw);
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  border: 3px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+  box-shadow: 7px 7px 0 var(--shadow);
 }
 
 .style-choice {

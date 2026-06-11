@@ -280,7 +280,7 @@ export default function ProjectsPage() {
               aria-expanded={expandedOptionGroup === "size"}
               type="button"
             >
-              ⌄
+              ▾
             </button>
           </div>
           {expandedOptionGroup === "size" ? (
@@ -332,7 +332,7 @@ export default function ProjectsPage() {
                 aria-expanded={expandedOptionGroup === "palette"}
                 type="button"
               >
-                ⌄
+                ▾
               </button>
             </div>
             {expandedOptionGroup === "palette" ? (
@@ -395,7 +395,7 @@ export default function ProjectsPage() {
               aria-expanded={expandedOptionGroup === "style"}
               type="button"
             >
-              ⌄
+              ▾
             </button>
           </div>
           {expandedOptionGroup === "style" ? (
