@@ -328,6 +328,66 @@ export function removeDetectedBackgroundColor(document: SpriteDocument): {
   };
 }
 
+function getColorDistance(color: string, target: string) {
+  const r = parseInt(color.slice(1, 3), 16) - parseInt(target.slice(1, 3), 16);
+  const g = parseInt(color.slice(3, 5), 16) - parseInt(target.slice(3, 5), 16);
+  const b = parseInt(color.slice(5, 7), 16) - parseInt(target.slice(5, 7), 16);
+  return r * r + g * g + b * b;
+}
+
+export function createSmartSelection(
+  document: SpriteDocument,
+  seedX: number,
+  seedY: number
+) {
+  const pixels = getPixelMap(document);
+  const seedKey = pixelKey(seedX, seedY);
+  const seedColor = pixels[seedKey];
+  if (!seedColor) return [];
+
+  const backgroundColor = getMostFrequentCornerColor(document);
+  const backgroundThreshold = 38 * 38;
+  const similarColorThreshold = 34 * 34;
+  const shouldUseBackgroundCutout =
+    Boolean(backgroundColor) &&
+    getColorDistance(seedColor, backgroundColor as string) > backgroundThreshold;
+  const isSelectablePixel = (color: string | undefined) => {
+    if (!color) return false;
+    if (shouldUseBackgroundCutout && backgroundColor) {
+      return getColorDistance(color, backgroundColor) > backgroundThreshold;
+    }
+    return getColorDistance(color, seedColor) <= similarColorThreshold;
+  };
+  const selected = new Set<string>();
+  const queue = [{ x: seedX, y: seedY }];
+
+  while (queue.length) {
+    const point = queue.shift();
+    if (!point) break;
+    if (
+      point.x < 0 ||
+      point.y < 0 ||
+      point.x >= document.canvas.width ||
+      point.y >= document.canvas.height
+    ) {
+      continue;
+    }
+
+    const key = pixelKey(point.x, point.y);
+    if (selected.has(key) || !isSelectablePixel(pixels[key])) continue;
+
+    selected.add(key);
+    queue.push(
+      { x: point.x + 1, y: point.y },
+      { x: point.x - 1, y: point.y },
+      { x: point.x, y: point.y + 1 },
+      { x: point.x, y: point.y - 1 }
+    );
+  }
+
+  return Array.from(selected);
+}
+
 export function renameDocument(document: SpriteDocument, name: string): SpriteDocument {
   return {
     ...document,

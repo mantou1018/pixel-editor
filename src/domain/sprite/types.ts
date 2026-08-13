@@ -1,4 +1,4 @@
-export type SpriteSize = 16 | 32 | 64;
+export type SpriteSize = 16 | 32 | 64 | 128 | 256;
 
 export type PixelMap = Record<string, string>;
 
@@ -36,6 +36,10 @@ export interface SpriteSource {
   type: "blank" | "ai-placeholder" | "pixel-import" | "photo-pixelize";
   label: string;
   createdAt: string;
+  originalPngDataUrl?: string;
+  originalFileName?: string;
+  importPaletteSize?: number;
+  importGridSize?: SpriteSize;
 }
 
 export interface SpriteDocument {

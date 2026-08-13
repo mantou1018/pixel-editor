@@ -1,12 +1,31 @@
 import type { ProjectSummary, SpriteDocument } from "@/domain/sprite/types";
 import { createSummary, getNowIso, renameDocument } from "@/domain/sprite/document";
+import { createWorkspaceSummary } from "@/domain/workspace/document";
+import type {
+  CanvasWorkspace,
+  WorkspaceItem,
+  WorkspaceItemSource,
+  WorkspaceSummary
+} from "@/domain/workspace/types";
 
 const dbName = "sprite-tool-mvp";
-const dbVersion = 2;
+const dbVersion = 4;
 const summaryStore = "project_summaries";
 const documentStore = "project_documents";
 const generationWorkspaceStore = "generation_workspace";
 const generationWorkspaceKey = "default";
+const workspaceSummaryStore = "workspace_summaries";
+const workspaceDocumentStore = "workspace_documents";
+const workspaceSpriteStore = "workspace_sprite_documents";
+
+type StoredWorkspaceItem = Omit<WorkspaceItem, "spriteDocument" | "source"> & {
+  spriteId: string;
+  source: Omit<WorkspaceItemSource, "dataUrl">;
+};
+
+type StoredWorkspace = Omit<CanvasWorkspace, "items"> & {
+  items: StoredWorkspaceItem[];
+};
 
 export interface GenerationWorkspaceState {
   id: typeof generationWorkspaceKey;
@@ -29,6 +48,15 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(generationWorkspaceStore)) {
         db.createObjectStore(generationWorkspaceStore, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(workspaceSummaryStore)) {
+        db.createObjectStore(workspaceSummaryStore, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(workspaceDocumentStore)) {
+        db.createObjectStore(workspaceDocumentStore, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(workspaceSpriteStore)) {
+        db.createObjectStore(workspaceSpriteStore, { keyPath: "id" });
       }
     };
 
@@ -146,4 +174,106 @@ export async function saveGenerationWorkspace(
 
   db.close();
   return nextState;
+}
+
+export async function listWorkspaceSummaries(): Promise<WorkspaceSummary[]> {
+  const db = await openDb();
+  const transaction = db.transaction(workspaceSummaryStore, "readonly");
+  const store = transaction.objectStore(workspaceSummaryStore);
+  const summaries = await requestToPromise<WorkspaceSummary[]>(store.getAll());
+  db.close();
+  return summaries.sort(
+    (a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+}
+
+export async function loadWorkspace(id: string): Promise<CanvasWorkspace | null> {
+  const db = await openDb();
+  const transaction = db.transaction([workspaceDocumentStore, workspaceSpriteStore], "readonly");
+  const store = transaction.objectStore(workspaceDocumentStore);
+  const workspace = await requestToPromise<(CanvasWorkspace | StoredWorkspace) | undefined>(store.get(id));
+  if (!workspace) {
+    db.close();
+    return null;
+  }
+
+  if (workspace.items.every((item) => "spriteDocument" in item)) {
+    db.close();
+    return workspace as CanvasWorkspace;
+  }
+
+  const spriteStore = transaction.objectStore(workspaceSpriteStore);
+  const spriteIds = (workspace as StoredWorkspace).items.map((item) => item.spriteId);
+  const sprites = await Promise.all(spriteIds.map((spriteId) => requestToPromise<SpriteDocument | undefined>(spriteStore.get(spriteId))));
+  db.close();
+  const spriteById = new Map(sprites.filter((sprite): sprite is SpriteDocument => Boolean(sprite)).map((sprite) => [sprite.id, sprite]));
+  const stored = workspace as StoredWorkspace;
+  return {
+    ...stored,
+    items: stored.items.flatMap((item) => {
+      const spriteDocument = spriteById.get(item.spriteId);
+      return spriteDocument ? [{ ...item, source: { ...item.source }, spriteDocument }] : [];
+    })
+  };
+}
+
+export async function saveWorkspace(
+  workspace: CanvasWorkspace
+): Promise<WorkspaceSummary> {
+  const updatedWorkspace: CanvasWorkspace = {
+    ...workspace,
+    updatedAt: getNowIso()
+  };
+  const summary = createWorkspaceSummary(updatedWorkspace);
+  const storedWorkspace: StoredWorkspace = {
+    ...updatedWorkspace,
+    items: updatedWorkspace.items.map(({ spriteDocument, source, ...item }) => ({
+      ...item,
+      spriteId: spriteDocument.id,
+      source: {
+        fileName: source.fileName,
+        mimeType: source.mimeType
+      }
+    }))
+  };
+  const db = await openDb();
+  const transaction = db.transaction(
+    [workspaceSummaryStore, workspaceDocumentStore, workspaceSpriteStore],
+    "readwrite"
+  );
+  transaction.objectStore(workspaceDocumentStore).put(storedWorkspace);
+  const spriteStore = transaction.objectStore(workspaceSpriteStore);
+  updatedWorkspace.items.forEach((item) => spriteStore.put(item.spriteDocument));
+  transaction.objectStore(workspaceSummaryStore).put(summary);
+
+  await new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+
+  db.close();
+  return summary;
+}
+
+export async function deleteWorkspace(id: string): Promise<void> {
+  const workspace = await loadWorkspace(id);
+  const db = await openDb();
+  const transaction = db.transaction(
+    [workspaceSummaryStore, workspaceDocumentStore, workspaceSpriteStore],
+    "readwrite"
+  );
+  transaction.objectStore(workspaceDocumentStore).delete(id);
+  transaction.objectStore(workspaceSummaryStore).delete(id);
+  const spriteStore = transaction.objectStore(workspaceSpriteStore);
+  workspace?.items.forEach((item) => spriteStore.delete(item.spriteDocument.id));
+
+  await new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+
+  db.close();
 }

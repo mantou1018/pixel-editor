@@ -17,6 +17,15 @@ export type ImportPaletteSize = 8 | 16 | 32 | 64 | 128 | 256 | 512;
 
 export interface PngImportOptions {
   paletteSize?: ImportPaletteSize;
+  sourceDataUrl?: string;
+}
+
+interface WeightedColor {
+  color: string;
+  r: number;
+  g: number;
+  b: number;
+  count: number;
 }
 
 const fallbackPalette = [
@@ -34,12 +43,21 @@ const alphaCutoff = 32;
 const maxPaletteColors = 512;
 const defaultPaletteSize: ImportPaletteSize = 32;
 
-function isPngFile(file: File) {
-  return file.type === "image/png" || file.name.toLowerCase().endsWith(".png");
+function isSupportedImageFile(file: File) {
+  const name = file.name.toLowerCase();
+  return (
+    file.type === "image/png" ||
+    file.type === "image/jpeg" ||
+    file.type === "image/webp" ||
+    name.endsWith(".png") ||
+    name.endsWith(".jpg") ||
+    name.endsWith(".jpeg") ||
+    name.endsWith(".webp")
+  );
 }
 
-function stripPngExtension(fileName: string) {
-  return fileName.replace(/\.png$/i, "").trim() || "PNG 导入精灵图";
+function stripImageExtension(fileName: string) {
+  return fileName.replace(/\.(png|jpe?g|webp)$/i, "").trim() || "图片导入像素图";
 }
 
 function toHex(value: number) {
@@ -100,10 +118,31 @@ async function decodeImage(file: File): Promise<DecodedImage> {
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
-      reject(new Error("PNG 图片读取失败"));
+      reject(new Error("图片读取失败"));
     };
     image.src = url;
   });
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("图片保存失败"));
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function fileFromDataUrl(dataUrl: string, fileName: string) {
+  const response = await fetch(dataUrl);
+  const blob = await response.blob();
+  return new File([blob], fileName, { type: blob.type || "image/png" });
 }
 
 function drawImageIntoGrid(
@@ -121,6 +160,7 @@ function drawImageIntoGrid(
   }
 
   sourceCtx.clearRect(0, 0, width, height);
+  sourceCtx.imageSmoothingEnabled = false;
   sourceCtx.drawImage(image, 0, 0, width, height);
 
   const sourceData = sourceCtx.getImageData(0, 0, width, height);
@@ -144,25 +184,53 @@ function drawImageIntoGrid(
 
       const sourceLeft = ((x - drawX) / drawWidth) * width;
       const sourceTop = ((y - drawY) / drawHeight) * height;
-      const sourceRight = ((x + 1 - drawX) / drawWidth) * width;
-      const sourceBottom = ((y + 1 - drawY) / drawHeight) * height;
       const targetIndex = (y * size + x) * 4;
-      const average = sampleAverageColor(
+      const sampled = sampleNearestColor(
         sourceData,
         sourceLeft,
         sourceTop,
-        sourceRight,
-        sourceBottom
+        ((x + 1 - drawX) / drawWidth) * width,
+        ((y + 1 - drawY) / drawHeight) * height
       );
 
-      gridData.data[targetIndex] = average.r;
-      gridData.data[targetIndex + 1] = average.g;
-      gridData.data[targetIndex + 2] = average.b;
-      gridData.data[targetIndex + 3] = average.a;
+      gridData.data[targetIndex] = sampled.r;
+      gridData.data[targetIndex + 1] = sampled.g;
+      gridData.data[targetIndex + 2] = sampled.b;
+      gridData.data[targetIndex + 3] = sampled.a;
     }
   }
 
   return gridData;
+}
+
+function sampleNearestColor(
+  imageData: ImageData,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number
+) {
+  const x = Math.min(
+    imageData.width - 1,
+    Math.max(0, Math.floor((left + right) / 2))
+  );
+  const y = Math.min(
+    imageData.height - 1,
+    Math.max(0, Math.floor((top + bottom) / 2))
+  );
+  const index = (y * imageData.width + x) * 4;
+  const alpha = imageData.data[index + 3];
+
+  if (alpha < alphaCutoff) {
+    return { r: 0, g: 0, b: 0, a: 0 };
+  }
+
+  return {
+    r: imageData.data[index],
+    g: imageData.data[index + 1],
+    b: imageData.data[index + 2],
+    a: alpha
+  };
 }
 
 function sampleAverageColor(
@@ -235,6 +303,131 @@ function findNearestColor(color: string, palette: string[]) {
   ).color;
 }
 
+function toWeightedColors(colorCounts: Map<string, number>) {
+  return Array.from(colorCounts.entries()).map(([color, count]) => ({
+    color,
+    ...parseColor(color),
+    count
+  }));
+}
+
+function getWeightedRepresentativeColor(colors: WeightedColor[]) {
+  let total = 0;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+
+  colors.forEach((color) => {
+    total += color.count;
+    r += color.r * color.count;
+    g += color.g * color.count;
+    b += color.b * color.count;
+  });
+
+  if (!total) {
+    return colors[0]?.color ?? fallbackPalette[0];
+  }
+
+  const average = {
+    r: Math.round(r / total),
+    g: Math.round(g / total),
+    b: Math.round(b / total)
+  };
+
+  return colors.reduce(
+    (nearest, color) => {
+      const distance =
+        (color.r - average.r) * (color.r - average.r) +
+        (color.g - average.g) * (color.g - average.g) +
+        (color.b - average.b) * (color.b - average.b);
+      return distance < nearest.distance ? { color: color.color, distance } : nearest;
+    },
+    { color: colors[0]?.color ?? fallbackPalette[0], distance: Number.POSITIVE_INFINITY }
+  ).color;
+}
+
+function getColorRange(colors: WeightedColor[], channel: "r" | "g" | "b") {
+  return colors.reduce(
+    (range, color) => ({
+      min: Math.min(range.min, color[channel]),
+      max: Math.max(range.max, color[channel])
+    }),
+    { min: 255, max: 0 }
+  );
+}
+
+function getDominantRangeChannel(colors: WeightedColor[]) {
+  const ranges = {
+    r: getColorRange(colors, "r"),
+    g: getColorRange(colors, "g"),
+    b: getColorRange(colors, "b")
+  };
+  const channels: Array<"r" | "g" | "b"> = ["r", "g", "b"];
+
+  return channels.reduce((largest, channel) => {
+    const largestRange = ranges[largest].max - ranges[largest].min;
+    const currentRange = ranges[channel].max - ranges[channel].min;
+    return currentRange > largestRange ? channel : largest;
+  }, "r");
+}
+
+function splitColorBucket(colors: WeightedColor[]) {
+  if (colors.length <= 1) {
+    return [colors, []];
+  }
+
+  const channel = getDominantRangeChannel(colors);
+  const sorted = [...colors].sort((a, b) => a[channel] - b[channel]);
+  const total = sorted.reduce((sum, color) => sum + color.count, 0);
+  const midpoint = total / 2;
+  let runningTotal = 0;
+  let splitIndex = 1;
+
+  for (let index = 0; index < sorted.length - 1; index += 1) {
+    runningTotal += sorted[index].count;
+    if (runningTotal >= midpoint) {
+      splitIndex = index + 1;
+      break;
+    }
+  }
+
+  return [sorted.slice(0, splitIndex), sorted.slice(splitIndex)];
+}
+
+function selectPaletteColors(colorCounts: Map<string, number>, paletteSize: number) {
+  const candidates = toWeightedColors(colorCounts);
+  if (candidates.length <= paletteSize) {
+    return candidates.map(({ color }) => color);
+  }
+
+  const buckets: WeightedColor[][] = [candidates];
+
+  while (buckets.length < paletteSize) {
+    const splitTargetIndex = buckets.reduce((bestIndex, bucket, index) => {
+      if (bucket.length <= 1) return bestIndex;
+      if (bestIndex === -1) return index;
+
+      const bestChannel = getDominantRangeChannel(buckets[bestIndex]);
+      const currentChannel = getDominantRangeChannel(bucket);
+      const bestRange = getColorRange(buckets[bestIndex], bestChannel);
+      const currentRange = getColorRange(bucket, currentChannel);
+      const bestScore = (bestRange.max - bestRange.min) * buckets[bestIndex].length;
+      const currentScore = (currentRange.max - currentRange.min) * bucket.length;
+
+      return currentScore > bestScore ? index : bestIndex;
+    }, -1);
+
+    if (splitTargetIndex === -1) break;
+
+    const [left, right] = splitColorBucket(buckets[splitTargetIndex]);
+    buckets.splice(splitTargetIndex, 1, left, right);
+  }
+
+  return buckets
+    .filter((bucket) => bucket.length)
+    .map(getWeightedRepresentativeColor);
+}
+
 function pixelsFromImageData(
   imageData: ImageData,
   size: SpriteSize,
@@ -263,10 +456,7 @@ function pixelsFromImageData(
     }
   }
 
-  const palette = Array.from(colorCounts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([color]) => color)
-    .slice(0, paletteSize);
+  const palette = selectPaletteColors(colorCounts, paletteSize);
   const activePalette = palette.length ? palette : fallbackPalette;
   const pixels = Object.fromEntries(
     Object.entries(rawPixels).map(([key, color]) => [
@@ -286,17 +476,24 @@ export async function createSpriteDocumentFromPng(
   size: SpriteSize,
   options?: PngImportOptions
 ): Promise<SpriteDocument> {
-  if (!isPngFile(file)) {
-    throw new Error("目前只支持导入 PNG 图片");
+  if (!isSupportedImageFile(file)) {
+    throw new Error("目前只支持导入 PNG、JPG 或 WebP 图片");
   }
 
-  const image = await decodeImage(file);
+  const [image, sourceDataUrl] = await Promise.all([
+    decodeImage(file),
+    options?.sourceDataUrl ? Promise.resolve(options.sourceDataUrl) : fileToDataUrl(file)
+  ]);
 
   try {
     const now = getNowIso();
+    const paletteSize = Math.min(
+      maxPaletteColors,
+      options?.paletteSize ?? defaultPaletteSize
+    );
     const layer: SpriteLayer = {
       id: createId("layer"),
-      name: "PNG 导入图层",
+      name: "图片导入图层",
       visible: true,
       locked: false,
       opacity: 1
@@ -324,7 +521,7 @@ export async function createSpriteDocumentFromPng(
 
     return {
       id: createId("sprite"),
-      name: stripPngExtension(file.name),
+      name: stripImageExtension(file.name),
       schemaVersion: 1,
       createdAt: now,
       updatedAt: now,
@@ -344,8 +541,12 @@ export async function createSpriteDocumentFromPng(
         {
           id: createId("source"),
           type: "pixel-import",
-          label: `PNG 导入：${file.name}，${palette.length} 色`,
-          createdAt: now
+          label: `图片导入：${file.name}，${palette.length} 色`,
+          createdAt: now,
+          originalPngDataUrl: sourceDataUrl,
+          originalFileName: file.name,
+          importPaletteSize: paletteSize,
+          importGridSize: size
         }
       ]
     };
@@ -354,4 +555,54 @@ export async function createSpriteDocumentFromPng(
       image.close();
     }
   }
+}
+
+export function getPngImportSource(document: SpriteDocument) {
+  return [...document.sources]
+    .reverse()
+    .find((source) => source.originalPngDataUrl);
+}
+
+export async function repixelizeSpriteDocumentFromPng(
+  document: SpriteDocument,
+  size: SpriteSize,
+  options?: PngImportOptions
+): Promise<SpriteDocument> {
+  const source = getPngImportSource(document);
+  if (!source?.originalPngDataUrl) {
+    throw new Error("这个项目没有保存原始图片，不能重新取色");
+  }
+
+  const fileName = source.originalFileName ?? `${document.name}.png`;
+  const file = await fileFromDataUrl(source.originalPngDataUrl, fileName);
+  const nextDocument = await createSpriteDocumentFromPng(file, size, {
+    ...options,
+    sourceDataUrl: source.originalPngDataUrl
+  });
+  const paletteSize = Math.min(
+    maxPaletteColors,
+    options?.paletteSize ?? defaultPaletteSize
+  );
+  const now = getNowIso();
+
+  return {
+    ...nextDocument,
+    id: document.id,
+    name: document.name,
+    createdAt: document.createdAt,
+    updatedAt: now,
+    sources: [
+      ...document.sources,
+      {
+        id: createId("source"),
+        type: "photo-pixelize",
+        label: `重新像素化：${fileName}，${size}x${size}，${paletteSize} 色`,
+        createdAt: now,
+        originalPngDataUrl: source.originalPngDataUrl,
+        originalFileName: fileName,
+        importPaletteSize: paletteSize,
+        importGridSize: size
+      }
+    ]
+  };
 }

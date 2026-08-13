@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "精灵图制作工具",
-  description: "生成、像素化、编辑和导出精灵图"
+  title: "像素帧动画编辑器",
+  description: "导入、像素化、编辑和导出像素帧动画"
 };
 
 export default function RootLayout({

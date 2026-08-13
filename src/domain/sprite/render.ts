@@ -37,6 +37,8 @@ export function renderDocumentToCanvas(
     backgroundColor?: string | null;
     showCheckerboard?: boolean;
     showGrid?: boolean;
+    editableMask?: Set<string> | null;
+    selectionInverted?: boolean;
     selected?: { x: number; y: number } | null;
     selectedSize?: number;
     scale?: number;
@@ -88,6 +90,47 @@ export function renderDocumentToCanvas(
     }
   }
 
+  if (options?.editableMask?.size) {
+    const mask = options.editableMask;
+    const isInverted = Boolean(options.selectionInverted);
+
+    ctx.fillStyle = "rgba(17, 24, 39, 0.32)";
+    for (let y = 0; y < document.canvas.height; y += 1) {
+      for (let x = 0; x < document.canvas.width; x += 1) {
+        const isSelected = mask.has(`${x},${y}`);
+        const isEditable = isInverted ? !isSelected : isSelected;
+        if (!isEditable) {
+          ctx.fillRect(x * scale, y * scale, scale, scale);
+        }
+      }
+    }
+
+    ctx.strokeStyle = "#ffe45c";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([Math.max(4, scale / 2), Math.max(3, scale / 3)]);
+    mask.forEach((key) => {
+      const { x, y } = parsePixelKey(key);
+      const neighbors = [
+        { x: x + 1, y },
+        { x: x - 1, y },
+        { x, y: y + 1 },
+        { x, y: y - 1 }
+      ];
+      const isBoundary = neighbors.some(
+        (neighbor) =>
+          neighbor.x < 0 ||
+          neighbor.y < 0 ||
+          neighbor.x >= document.canvas.width ||
+          neighbor.y >= document.canvas.height ||
+          !mask.has(`${neighbor.x},${neighbor.y}`)
+      );
+      if (isBoundary) {
+        ctx.strokeRect(x * scale + 1, y * scale + 1, scale - 2, scale - 2);
+      }
+    });
+    ctx.setLineDash([]);
+  }
+
   if (options?.selected) {
     const selectedSize = Math.max(1, options.selectedSize ?? 1);
     const offset = Math.floor(selectedSize / 2);
@@ -109,7 +152,10 @@ export function renderDocumentToCanvas(
 
 export function renderDocumentThumbnail(
   document: SpriteDocument,
-  size = 160
+  size = 160,
+  options?: {
+    showCheckerboard?: boolean;
+  }
 ): string {
   if (typeof document === "undefined" || typeof window === "undefined") {
     return "";
@@ -121,6 +167,7 @@ export function renderDocumentThumbnail(
     Math.floor(size / Math.max(document.canvas.width, document.canvas.height))
   );
   renderDocumentToCanvas(canvas, document, {
+    showCheckerboard: options?.showCheckerboard ?? true,
     showGrid: false,
     scale: cellSize
   });

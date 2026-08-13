@@ -6,6 +6,7 @@ import { PixelButton } from "@/components/PixelButton";
 import { SpriteCanvas } from "@/components/editor/SpriteCanvas";
 import {
   addOrUpdateBackgroundLayer,
+  createSmartSelection,
   getPixelMap,
   pixelKey,
   removeDetectedBackgroundColor,
@@ -13,8 +14,13 @@ import {
   toggleLayerVisibility,
   updatePixels
 } from "@/domain/sprite/document";
+import {
+  getPngImportSource,
+  repixelizeSpriteDocumentFromPng,
+  type ImportPaletteSize
+} from "@/domain/sprite/importPng";
 import { exportDocumentPng } from "@/domain/sprite/render";
-import type { SpriteDocument } from "@/domain/sprite/types";
+import type { SpriteDocument, SpriteSize } from "@/domain/sprite/types";
 import { downloadDataUrl, downloadText } from "@/lib/download";
 import { loadProject, saveProject } from "@/lib/storage/projects";
 
@@ -25,6 +31,10 @@ type ExportScaleMode = "original" | "preview";
 type ExportBackgroundMode = "transparent" | "selected";
 const minBrushSize = 1;
 const maxBrushSize = 8;
+const repixelizeSizes: SpriteSize[] = [16, 32, 64, 128, 256];
+const repixelizePaletteSizes: ImportPaletteSize[] = [8, 16, 32, 64, 128, 256, 512];
+const autoSaveDelay = 800;
+type SaveState = "saved" | "pending" | "saving" | "error";
 
 export default function EditorPage() {
   const router = useRouter();
@@ -34,6 +44,9 @@ export default function EditorPage() {
   const [status, setStatus] = useState("读取项目...");
   const [selectedColor, setSelectedColor] = useState("#374151");
   const [eraseMode, setEraseMode] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectionKeys, setSelectionKeys] = useState<string[]>([]);
+  const [selectionInverted, setSelectionInverted] = useState(false);
   const [brushSize, setBrushSize] = useState(minBrushSize);
   const [exportScaleMode, setExportScaleMode] =
     useState<ExportScaleMode>("original");
@@ -41,25 +54,60 @@ export default function EditorPage() {
     useState<ExportBackgroundMode>("transparent");
   const [brushPopoverTool, setBrushPopoverTool] = useState<BrushPopoverTool>(null);
   const [editingBackgroundColor, setEditingBackgroundColor] = useState<string | null>(null);
+  const [showMoreActions, setShowMoreActions] = useState(false);
+  const [repixelizeSize, setRepixelizeSize] = useState<SpriteSize>(64);
+  const [repixelizePaletteSize, setRepixelizePaletteSize] =
+    useState<ImportPaletteSize>(32);
+  const [isRepixelizing, setIsRepixelizing] = useState(false);
   const [undoStack, setUndoStack] = useState<SpriteDocument[]>([]);
+  const [saveState, setSaveState] = useState<SaveState>("saved");
   const strokeStartDocumentRef = useRef<SpriteDocument | null>(null);
   const strokeChangesRef = useRef<StrokeChange[]>([]);
+  const repixelizeRequestRef = useRef(0);
+  const latestDocumentRef = useRef<SpriteDocument | null>(null);
+  const lastSavedDocumentRef = useRef<SpriteDocument | null>(null);
+  const documentSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const isDocumentReadyRef = useRef(false);
 
   useEffect(() => {
     async function load() {
-      const loaded = await loadProject(projectId);
-      if (!loaded) {
-        setStatus("项目不存在或读取失败");
-        return;
+      try {
+        const loaded = await loadProject(projectId);
+        if (!loaded) {
+          setStatus("项目不存在或读取失败");
+          setSaveState("error");
+          return;
+        }
+        latestDocumentRef.current = loaded;
+        lastSavedDocumentRef.current = loaded;
+        isDocumentReadyRef.current = true;
+        setDocument(loaded);
+        setSaveState("saved");
+        const importSource = getPngImportSource(loaded);
+        setRepixelizeSize(importSource?.importGridSize ?? loaded.canvas.width);
+        setRepixelizePaletteSize(
+          isImportPaletteSize(importSource?.importPaletteSize)
+            ? importSource.importPaletteSize
+            : 32
+        );
+        setUndoStack([]);
+        setSelectionMode(false);
+        setSelectionKeys([]);
+        setSelectionInverted(false);
+        strokeStartDocumentRef.current = null;
+        strokeChangesRef.current = [];
+        setStatus("已读取，可继续编辑");
+      } catch (error) {
+        setStatus(error instanceof Error ? `读取失败：${error.message}` : "读取项目失败，请刷新重试");
+        setSaveState("error");
       }
-      setDocument(loaded);
-      setUndoStack([]);
-      strokeStartDocumentRef.current = null;
-      strokeChangesRef.current = [];
-      setStatus("已读取，可继续编辑");
     }
     load();
   }, [projectId]);
+
+  function isImportPaletteSize(value: unknown): value is ImportPaletteSize {
+    return repixelizePaletteSizes.includes(value as ImportPaletteSize);
+  }
 
   const activeAnimation = useMemo(() => {
     if (!document) return null;
@@ -79,15 +127,77 @@ export default function EditorPage() {
 
   const sourceLabel = useMemo(() => {
     if (!document) return "未知来源";
-    return document.sources[document.sources.length - 1]?.label ?? "未知来源";
+    return (document.sources[document.sources.length - 1]?.label ?? "未知来源").replace(
+      "文字生成占位",
+      "旧版素材"
+    );
+  }, [document]);
+
+  const pngImportSource = useMemo(() => {
+    if (!document) return null;
+    return getPngImportSource(document) ?? null;
+  }, [document]);
+
+  const editableMask = useMemo(() => {
+    if (!selectionKeys.length) return null;
+    return new Set(selectionKeys);
+  }, [selectionKeys]);
+
+  const persistDocument = useCallback(async (target: SpriteDocument) => {
+    setSaveState("saving");
+    const saveTask = documentSaveQueueRef.current.then(() => saveProject(target));
+    documentSaveQueueRef.current = saveTask.catch(() => undefined);
+
+    try {
+      await saveTask;
+      lastSavedDocumentRef.current = target;
+      if (latestDocumentRef.current === target) setSaveState("saved");
+      return true;
+    } catch (error) {
+      if (latestDocumentRef.current === target) {
+        setSaveState("error");
+        setStatus(
+          error instanceof Error
+            ? `保存失败：${error.message}`
+            : "保存失败，请检查浏览器存储空间或权限"
+        );
+      }
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    latestDocumentRef.current = document;
+    if (
+      !document ||
+      !isDocumentReadyRef.current ||
+      lastSavedDocumentRef.current === document
+    ) {
+      return;
+    }
+
+    setSaveState("pending");
+    const timer = window.setTimeout(() => {
+      void persistDocument(document);
+    }, autoSaveDelay);
+    return () => window.clearTimeout(timer);
+  }, [document, persistDocument]);
+
+  useEffect(() => {
+    function warnBeforeLeaving(event: BeforeUnloadEvent) {
+      if (!document || lastSavedDocumentRef.current === document) return;
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
   }, [document]);
 
   async function handleSave() {
     if (!document) return;
-    setStatus("保存中...");
-    const summary = await saveProject(document);
-    setDocument((current) => (current ? { ...current, updatedAt: summary.updatedAt } : current));
-    setStatus("已保存");
+    const saved = await persistDocument(document);
+    if (saved) setStatus("已保存");
   }
 
   const handleUndo = useCallback(() => {
@@ -161,6 +271,12 @@ export default function EditorPage() {
 
     getBrushPixels(x, y).forEach((pixel) => {
       const key = pixelKey(pixel.x, pixel.y);
+      if (editableMask?.size) {
+        const isSelected = editableMask.has(key);
+        const isEditable = selectionInverted ? !isSelected : isSelected;
+        if (!isEditable) return;
+      }
+
       const startingColor = startingPixels[key] ?? null;
       const currentColor = currentPixels[key] ?? null;
       if ((currentColor?.toLowerCase() ?? null) === (color?.toLowerCase() ?? null)) {
@@ -254,6 +370,18 @@ export default function EditorPage() {
     setStatus(`已增加背景色图层：${selectedColor}`);
   }
 
+  function handleSmartSelect(x: number, y: number) {
+    if (!document) return;
+    const nextSelection = createSmartSelection(document, x, y);
+    setSelectionKeys(nextSelection);
+    setSelectionInverted(false);
+    setStatus(
+      nextSelection.length
+        ? `已智能选取 ${nextSelection.length} 个像素格，画笔只会编辑选区内`
+        : "没有识别到可选区域"
+    );
+  }
+
   function handleOpenBackgroundColorEditor() {
     if (!document) return;
     const backgroundLayer = document.layers.find((layer) => layer.name === "背景色");
@@ -274,6 +402,37 @@ export default function EditorPage() {
     setUndoStack((current) => [...current.slice(-(maxUndoSteps - 1)), document]);
     setDocument(addOrUpdateBackgroundLayer(document, color));
     setStatus(`已更新背景色：${color}`);
+  }
+
+  async function handleRepixelize(size: SpriteSize, paletteSize: ImportPaletteSize) {
+    if (!document || !pngImportSource) return;
+
+    const requestId = repixelizeRequestRef.current + 1;
+    repixelizeRequestRef.current = requestId;
+    const beforeDocument = document;
+
+    setRepixelizeSize(size);
+    setRepixelizePaletteSize(paletteSize);
+    setIsRepixelizing(true);
+    setStatus(`正在重新取色：${size}x${size} · ${paletteSize} 色...`);
+
+    try {
+      const nextDocument = await repixelizeSpriteDocumentFromPng(document, size, {
+        paletteSize
+      });
+      if (repixelizeRequestRef.current !== requestId) return;
+
+      setUndoStack((current) => [...current.slice(-(maxUndoSteps - 1)), beforeDocument]);
+      setDocument(nextDocument);
+      setStatus(`已重新取色：${size}x${size} · ${paletteSize} 色，有未保存修改`);
+    } catch (error) {
+      if (repixelizeRequestRef.current !== requestId) return;
+      setStatus(error instanceof Error ? error.message : "重新取色失败");
+    } finally {
+      if (repixelizeRequestRef.current === requestId) {
+        setIsRepixelizing(false);
+      }
+    }
   }
 
   function handleSelectLayer(layerId: string) {
@@ -308,6 +467,9 @@ export default function EditorPage() {
           <span>尺寸：{document.canvas.width}x{document.canvas.height}</span>
           <span>动作：{activeAnimation?.name ?? "未命名"}</span>
           <span>状态：{status}</span>
+          <span>
+            保存：{saveState === "saved" ? "已保存" : saveState === "pending" ? "等待自动保存" : saveState === "saving" ? "保存中" : "保存失败"}
+          </span>
         </div>
         <div className="editor-actions">
           <PixelButton
@@ -318,13 +480,34 @@ export default function EditorPage() {
           >
             撤回
           </PixelButton>
-          <PixelButton onClick={handleSave}>保存</PixelButton>
-          <PixelButton variant="secondary" onClick={handleExportJson}>
-            导出 JSON
+          <PixelButton onClick={handleSave} disabled={saveState === "saving"}>
+            {saveState === "saving" ? "保存中..." : saveState === "error" ? "重试保存" : "保存"}
           </PixelButton>
-          <PixelButton variant="secondary" onClick={handleExportPng}>
+          <PixelButton onClick={handleExportPng}>
             导出 PNG
           </PixelButton>
+          <div className="editor-more-actions">
+            <button
+              type="button"
+              onClick={() => setShowMoreActions((current) => !current)}
+              aria-expanded={showMoreActions}
+            >
+              更多
+            </button>
+            {showMoreActions ? (
+              <div className="editor-more-menu">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExportJson();
+                    setShowMoreActions(false);
+                  }}
+                >
+                  导出 JSON
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
 
@@ -335,6 +518,7 @@ export default function EditorPage() {
               className={!eraseMode ? "active" : ""}
               onClick={() => {
                 setEraseMode(false);
+                setSelectionMode(false);
                 setBrushPopoverTool(null);
               }}
             >
@@ -344,6 +528,7 @@ export default function EditorPage() {
               className="tool-option-toggle"
               onClick={() => {
                 setEraseMode(false);
+                setSelectionMode(false);
                 setBrushPopoverTool((current) => (current === "brush" ? null : "brush"));
               }}
               aria-label="打开画笔尺寸设置"
@@ -357,6 +542,7 @@ export default function EditorPage() {
               className={eraseMode ? "active" : ""}
               onClick={() => {
                 setEraseMode(true);
+                setSelectionMode(false);
                 setBrushPopoverTool(null);
               }}
             >
@@ -366,6 +552,7 @@ export default function EditorPage() {
               className="tool-option-toggle"
               onClick={() => {
                 setEraseMode(true);
+                setSelectionMode(false);
                 setBrushPopoverTool((current) => (current === "eraser" ? null : "eraser"));
               }}
               aria-label="打开橡皮尺寸设置"
@@ -404,6 +591,17 @@ export default function EditorPage() {
             </div>
           ) : null}
           <div className="tool-divider" />
+          <button
+            className={selectionMode ? "active" : ""}
+            onClick={() => {
+              setSelectionMode((current) => !current);
+              setBrushPopoverTool(null);
+            }}
+            type="button"
+          >
+            智能选区
+          </button>
+          <div className="tool-divider" />
           <label>
             颜色
             <input
@@ -412,6 +610,7 @@ export default function EditorPage() {
               onChange={(event) => {
                 setSelectedColor(event.target.value);
                 setEraseMode(false);
+                setSelectionMode(false);
               }}
             />
           </label>
@@ -422,26 +621,58 @@ export default function EditorPage() {
           selectedColor={selectedColor}
           eraseMode={eraseMode}
           brushSize={brushSize}
+          selectionMode={selectionMode}
+          editableMask={editableMask}
+          selectionInverted={selectionInverted}
           onPixelChange={handlePixelChange}
+          onSmartSelect={handleSmartSelect}
           onStrokeStart={handleStrokeStart}
           onStrokeEnd={handleStrokeEnd}
         />
 
         <aside className="side-panel">
-          <section>
-            <h2>生成来源</h2>
-            <p>{sourceLabel}</p>
-            <button disabled>基于当前图再生成</button>
-            <p>下一轮接真实 AI 或局部重绘；当前结果已可编辑和导出。</p>
-          </section>
-          <section>
-            <h2>控制</h2>
-            <p>当前颜色：{selectedColor}</p>
-            <p>图层：{activeLayer?.name ?? "默认图层"}</p>
-            <p>动作数：{document.animations.length}</p>
-            <p>帧数：{document.frames.length} / 12</p>
-          </section>
-          <section>
+          {pngImportSource ? (
+            <section className="primary-side-section">
+              <h2>像素取色</h2>
+              <div className="export-options" role="group" aria-label="像素网格尺寸">
+                {repixelizeSizes.map((size) => (
+                  <button
+                    key={size}
+                    className={repixelizeSize === size ? "active" : ""}
+                    onClick={() => handleRepixelize(size, repixelizePaletteSize)}
+                    disabled={isRepixelizing}
+                  >
+                    {size}x{size}
+                    <span>重新取样</span>
+                  </button>
+                ))}
+              </div>
+              <label className="repixelize-select">
+                色数
+                <select
+                  value={repixelizePaletteSize}
+                  disabled={isRepixelizing}
+                  onChange={(event) => {
+                    const nextPaletteSize = Number(event.target.value);
+                    if (!isImportPaletteSize(nextPaletteSize)) return;
+                    handleRepixelize(repixelizeSize, nextPaletteSize);
+                  }}
+                >
+                  {repixelizePaletteSizes.map((size) => (
+                    <option key={size} value={size}>
+                      {size} 色
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="repixelize-note">
+                {isRepixelizing
+                  ? "正在根据原图片重新像素化..."
+                  : "基于原图片重新像素化，会替换当前像素，可撤回。"}
+              </p>
+            </section>
+          ) : null}
+          <section className="primary-side-section">
             <h2>导出设置</h2>
             <div className="export-options" role="group" aria-label="导出尺寸">
               <button
@@ -475,6 +706,7 @@ export default function EditorPage() {
                 <span>{selectedColor}</span>
               </button>
             </div>
+            <PixelButton onClick={handleExportPng}>导出 PNG</PixelButton>
           </section>
           <section>
             <h2>图层</h2>
@@ -534,6 +766,43 @@ export default function EditorPage() {
                 </div>
               ))}
             </div>
+          </section>
+          <section>
+            <h2>选区</h2>
+            <div className="layer-actions">
+              <button
+                onClick={() => {
+                  setSelectionInverted((current) => !current);
+                  setStatus(selectionInverted ? "已恢复选区内可编辑" : "已反向选区，选区外可编辑");
+                }}
+                disabled={!selectionKeys.length}
+              >
+                反向选区
+              </button>
+              <button
+                onClick={() => {
+                  setSelectionKeys([]);
+                  setSelectionInverted(false);
+                  setSelectionMode(false);
+                  setStatus("已清除选区，全部像素可编辑");
+                }}
+                disabled={!selectionKeys.length}
+              >
+                清除选区
+              </button>
+            </div>
+            <p className="selection-note">
+              {selectionKeys.length
+                ? `${selectionInverted ? "选区外" : "选区内"}可编辑，共 ${selectionKeys.length} 个参考像素格。`
+                : "点击左侧“智能选区”，再点画布中的对象。"}
+            </p>
+          </section>
+          <section className="side-panel-muted">
+            <h2>信息</h2>
+            <p>来源：{sourceLabel}</p>
+            <p>当前颜色：{selectedColor}</p>
+            <p>当前图层：{activeLayer?.name ?? "默认图层"}</p>
+            <p>动作 / 帧：{document.animations.length} / {document.frames.length}</p>
           </section>
         </aside>
       </section>
