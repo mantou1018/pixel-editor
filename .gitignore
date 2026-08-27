@@ -14,3 +14,6 @@ pnpm-debug.log*
 .DS_Store
 .playwright-cli/
 *.tsbuildinfo
+
+# Local generated media
+/public/generated/
