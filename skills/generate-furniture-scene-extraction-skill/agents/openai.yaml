@@ -1,4 +1,0 @@
-interface:
-  display_name: "房间生成skill"
-  short_description: "先生成房间，确认后提取家具"
-  default_prompt: "使用 $generate-furniture-scene-extraction-skill：先按用户参考图和唯一母版生成游戏房间，确认无误后再提取家具素材。"

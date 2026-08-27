@@ -1,4 +1,0 @@
-interface:
-  display_name: "家具正面素材生成"
-  short_description: "生成正面正交像素家具素材"
-  default_prompt: "使用 $generate-front-furniture-sprites 生成一张正面像素家具精灵图。"
